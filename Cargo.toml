@@ -4,6 +4,7 @@ members = [
     "crates/devtone-core",
     "crates/devtone-engine",
     "crates/devtone-tui",
+    "crates/devtone-notch",
 ]
 
 [workspace.package]
