@@ -1,3 +1,4 @@
+mod drum;
 mod spectrum;
 mod synth;
 
