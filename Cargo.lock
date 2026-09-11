@@ -641,6 +641,7 @@ dependencies = [
  "devtone-core",
  "devtone-engine",
  "devtone-notch",
+ "devtone-sensors",
  "devtone-tui",
  "ratatui",
  "serde",

@@ -55,6 +55,7 @@ impl App {
 
         let audio = spawn_audio(cfg.clone(), cli.intensity.unwrap_or(cfg.intensity), params.clone(), snap.clone(), muted.clone(), running.clone());
         let mapper = spawn_mapper(state.clone(), params.clone(), running.clone());
+        let sensors = spawn_sensors(cli.agent, cfg.clone(), state.clone(), running.clone());
 
         #[cfg(feature = "tui")]
         let tui_join = {
@@ -95,6 +96,7 @@ impl App {
         thread::sleep(Duration::from_millis(150));
         drop(audio);
         drop(mapper);
+        drop(sensors);
         drop(tui_join);
         let _ = sock;
         ExitCode::SUCCESS
@@ -236,6 +238,29 @@ fn start_cpal(
     Some(stream)
 }
 
+fn spawn_sensors(
+    override_agent: Option<devtone_core::AgentKind>,
+    cfg: Config,
+    state: Arc<ArcSwap<StateFrame>>,
+    running: Arc<AtomicBool>,
+) -> thread::JoinHandle<()> {
+    thread::Builder::new()
+        .name("devtone-sensors".into())
+        .spawn(move || {
+            let mut sup = devtone_sensors::Supervisor::new(
+                override_agent,
+                cfg.watch_agent_logs,
+                cfg.watch_active_window,
+            );
+            while running.load(Ordering::SeqCst) {
+                let frame = sup.tick();
+                state.store(Arc::new(frame));
+                thread::sleep(Duration::from_millis(250));
+            }
+        })
+        .expect("sensor thread")
+}
+
 fn spawn_mapper(
     state: Arc<ArcSwap<StateFrame>>,
     params: Arc<ArcSwap<MusicParams>>,
@@ -342,11 +367,15 @@ mod tests {
     use crate::cli::parse_cli;
     use crate::config::Config;
     use crate::ipc_server::send_request;
-    use devtone_core::{IpcRequest, IpcResponse};
+    use devtone_core::{AgentKind, IpcRequest, IpcResponse};
     use std::process::ExitCode;
+    use std::sync::Mutex;
+
+    static ENV: Mutex<()> = Mutex::new(());
 
     #[test]
     fn headless_no_notch_starts_and_stop_exits() {
+        let _g = ENV.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("devtone.sock");
         std::env::set_var("DEVTONE_SOCK", &path);
@@ -367,5 +396,47 @@ mod tests {
         let _ = send_request(&path, &IpcRequest::Stop);
         let code = handle.join().unwrap();
         assert_eq!(code, ExitCode::SUCCESS);
+    }
+
+    #[test]
+    fn appending_pi_jsonl_updates_status_agent() {
+        let _g = ENV.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let sock = tmp.path().join("devtone.sock");
+        let pi_root = tmp.path().join("sessions");
+        std::fs::create_dir_all(&pi_root).unwrap();
+        let jsonl = pi_root.join("s.jsonl");
+        std::fs::write(&jsonl, "").unwrap();
+        std::env::set_var("DEVTONE_SOCK", &sock);
+        std::env::set_var("DEVTONE_PI_ROOT", &pi_root);
+        std::env::set_var("DEVTONE_NO_CPAL", "1");
+        let handle = std::thread::spawn(|| {
+            App::run(
+                parse_cli(["devtone", "--headless", "--no-notch"]),
+                Config::default(),
+            )
+        });
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        std::fs::write(
+            &jsonl,
+            r#"{"type":"message","role":"assistant","model":"sonnet","usage":{"input":1,"output":20,"cacheRead":0,"cacheWrite":0}}"#,
+        )
+        .unwrap();
+        let mut agent = AgentKind::None;
+        let mut tps = 0.0f32;
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(80));
+            if let Ok(IpcResponse::State(st)) = send_request(&sock, &IpcRequest::Status) {
+                agent = st.agent;
+                tps = st.out_tps;
+                if agent == AgentKind::Pi && tps > 0.0 {
+                    break;
+                }
+            }
+        }
+        let _ = send_request(&sock, &IpcRequest::Stop);
+        let _ = handle.join();
+        assert_eq!(agent, AgentKind::Pi);
+        assert!(tps > 0.0, "out_tps={tps}");
     }
 }

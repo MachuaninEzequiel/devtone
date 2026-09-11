@@ -5,6 +5,7 @@ mod focus;
 mod opencode;
 mod pi;
 mod source;
+mod supervisor;
 
 pub use arbitrate::arbitrate;
 pub use claude::ClaudeSource;
@@ -13,3 +14,4 @@ pub use focus::{agent_from_cmdline, foreground_agent, is_terminal_class, lang_fr
 pub use opencode::OpenCodeSource;
 pub use pi::PiSource;
 pub use source::{AgentSource, IngestKind};
+pub use supervisor::Supervisor;

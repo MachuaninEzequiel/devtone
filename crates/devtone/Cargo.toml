@@ -9,6 +9,7 @@ default-run = "devtone"
 [dependencies]
 devtone-core = { workspace = true }
 devtone-engine = { path = "../devtone-engine" }
+devtone-sensors = { path = "../devtone-sensors" }
 devtone-tui = { path = "../devtone-tui", optional = true }
 devtone-notch = { path = "../devtone-notch", optional = true }
 crossterm = { version = "0.28", optional = true }
