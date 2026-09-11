@@ -39,10 +39,9 @@ macOS / Windows compile stubs exist; **Linux is the tested platform**.
 ## Use
 
 ```bash
-devtone                 # audio + TUI (no overlay on Wayland)
-devtone --no-notch      # never open the HUD
-devtone --notch         # force the always-on-top HUD (can steal clicks on KWin)
-devtone --headless      # audio + socket, no TUI (tmux / background)
+devtone                 # audio daemon, no UI (status/stop from another terminal)
+devtone --headless      # same (UI is not wired yet)
+devtone --no-notch      # ignored for now; overlay is off
 devtone --agent pi      # force the active CLI
 devtone --intensity 0.7
 devtone status

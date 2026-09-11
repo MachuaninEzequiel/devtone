@@ -24,7 +24,7 @@ impl Default for Config {
             sample_rate: 44100,
             buffer: 512,
             watch_agent_logs: true,
-            watch_active_window: true,
+            watch_active_window: false,
         }
     }
 }

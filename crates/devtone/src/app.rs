@@ -57,57 +57,16 @@ impl App {
         let mapper = spawn_mapper(state.clone(), params.clone(), running.clone());
         let sensors = spawn_sensors(cli.agent, cfg.clone(), state.clone(), running.clone());
 
-        #[cfg(feature = "tui")]
-        let tui_join = {
-            use std::io::IsTerminal;
-            if !cli.headless && std::io::stdout().is_terminal() {
-                Some(spawn_tui(state.clone(), params.clone(), snap.clone(), muted.clone(), tx.clone(), running.clone(), cfg.fps_tui))
-            } else {
-                None
-            }
-        };
-        #[cfg(not(feature = "tui"))]
-        let tui_join = None::<thread::JoinHandle<()>>;
-
-        let notch_wanted = crate::cli::notch_enabled(
-            cli.headless,
-            cli.no_notch,
-            cli.notch,
-            cfg.notch,
-            crate::cli::is_wayland(),
-        );
-
-        if notch_wanted {
-            #[cfg(feature = "notch")]
-            {
-                let snap_n = snap.clone();
-                let tx_n = tx.clone();
-                let running_n = running.clone();
-                let muted_n = muted.clone();
-                let state_n = state.clone();
-                let tx_i = tx.clone();
-                let handle = thread::spawn(move || {
-                    ipc_loop(server, tx_i, rx, state_n, muted_n, running_n);
-                });
-                if let Err(e) = devtone_notch::run_notch(snap_n, tx_n, running.clone()) {
-                    eprintln!("devtone: notch disabled: {e}");
-                }
-                running.store(false, Ordering::SeqCst);
-                let _ = handle.join();
-            }
-            #[cfg(not(feature = "notch"))]
-            {
-                ipc_loop(server, tx, rx, state.clone(), muted.clone(), running.clone());
-            }
-        } else {
-            ipc_loop(server, tx, rx, state.clone(), muted.clone(), running.clone());
-        }
+        // No TUI, no notch, no kwindowprop: audio + socket only until the
+        // compositor path is safe. `devtone status` / `devtone stop` from another tty.
+        let _ = cli.headless;
+        eprintln!("devtone: audio daemon (no UI). status / stop from another terminal.");
+        ipc_loop(server, tx, rx, state.clone(), muted.clone(), running.clone());
 
         thread::sleep(Duration::from_millis(150));
         drop(audio);
         drop(mapper);
         drop(sensors);
-        drop(tui_join);
         let _ = sock;
         ExitCode::SUCCESS
     }

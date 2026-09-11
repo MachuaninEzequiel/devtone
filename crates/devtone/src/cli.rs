@@ -70,6 +70,7 @@ where
 
 /// Overlay HUD. Off on Wayland unless `--notch`: KWin treats a 36px
 /// undecorated always-on-top window as a resize handle and steals the pointer.
+#[allow(dead_code)]
 pub fn notch_enabled(headless: bool, no_notch: bool, force_notch: bool, cfg_notch: bool, wayland: bool) -> bool {
     if headless || no_notch {
         return false;
@@ -80,6 +81,7 @@ pub fn notch_enabled(headless: bool, no_notch: bool, force_notch: bool, cfg_notc
     cfg_notch && !wayland
 }
 
+#[allow(dead_code)]
 pub fn is_wayland() -> bool {
     std::env::var_os("WAYLAND_DISPLAY").is_some()
 }

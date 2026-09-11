@@ -28,7 +28,7 @@ serde_json = { workspace = true }
 tempfile = "3"
 
 [features]
-default = ["tui", "notch"]
+default = []
 tui = ["dep:devtone-tui", "dep:crossterm", "dep:ratatui"]
 notch = ["dep:devtone-notch", "devtone-notch/window"]
 
