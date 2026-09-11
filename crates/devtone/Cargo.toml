@@ -11,6 +11,8 @@ devtone-core = { workspace = true }
 devtone-engine = { path = "../devtone-engine" }
 devtone-tui = { path = "../devtone-tui", optional = true }
 devtone-notch = { path = "../devtone-notch", optional = true }
+crossterm = { version = "0.28", optional = true }
+ratatui = { version = "0.29", optional = true }
 clap = { version = "4", features = ["derive"] }
 serde = { workspace = true }
 toml = "0.8"
@@ -26,7 +28,7 @@ tempfile = "3"
 
 [features]
 default = ["tui", "notch"]
-tui = ["dep:devtone-tui"]
+tui = ["dep:devtone-tui", "dep:crossterm", "dep:ratatui"]
 notch = ["dep:devtone-notch", "devtone-notch/window"]
 
 [[bin]]
