@@ -22,6 +22,9 @@ impl ClaudeSource {
 }
 
 fn default_root() -> PathBuf {
+    if let Ok(p) = std::env::var("DEVTONE_CLAUDE_ROOT") {
+        return PathBuf::from(p);
+    }
     dirs_home().join(".claude/projects")
 }
 

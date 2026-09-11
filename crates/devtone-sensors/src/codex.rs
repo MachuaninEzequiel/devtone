@@ -22,6 +22,9 @@ impl CodexSource {
 }
 
 fn default_root() -> PathBuf {
+    if let Ok(p) = std::env::var("DEVTONE_CODEX_ROOT") {
+        return PathBuf::from(p);
+    }
     dirs_home().join(".codex/sessions")
 }
 

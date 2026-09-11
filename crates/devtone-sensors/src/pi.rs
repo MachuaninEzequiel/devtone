@@ -52,22 +52,29 @@ impl AgentSource for PiSource {
         if v.get("type").and_then(|t| t.as_str()) != Some("message") {
             return None;
         }
-        let usage = v.get("usage")?;
+        // Real pi sessions nest payload under `message`; tests also accept a flat shape.
+        let payload = v.get("message").filter(|m| m.is_object()).unwrap_or(&v);
+        let role = payload.get("role").and_then(|r| r.as_str()).unwrap_or("");
+        if role == "user" || role == "tool" {
+            return None;
+        }
+        let usage = payload.get("usage").or_else(|| v.get("usage"))?;
         let out = usage.get("output").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
         let inn = usage.get("input").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
         let cache = usage.get("cacheRead").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
         let cache_w = usage.get("cacheWrite").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
-        let model = v.get("model").and_then(|m| m.as_str()).unwrap_or("");
-        let prev = self.last.insert(path.to_path_buf(), (out, inn, cache));
-        let (d_out, d_in, d_cache) = match prev {
-            Some((po, pi, pc)) => (out.saturating_sub(po), inn.saturating_sub(pi), cache.saturating_sub(pc)),
-            None => (out, inn, cache),
-        };
+        let model = payload
+            .get("model")
+            .or_else(|| v.get("model"))
+            .and_then(|m| m.as_str())
+            .unwrap_or("");
+        // Each assistant record is one completion, not a session-running total.
+        let _ = self.last.insert(path.to_path_buf(), (out, inn, cache));
         Some(TokenDelta {
             agent: AgentKind::Pi,
-            out: d_out,
-            inn: d_in,
-            cache_read: d_cache,
+            out,
+            inn,
+            cache_read: cache,
             cache_write: cache_w,
             model: TinyStr::from_str_lossy(model),
             ts_ms: 0,
@@ -97,5 +104,18 @@ mod tests {
         assert_eq!(d.model.as_str(), "sonnet");
         let dump = format!("{d:?}");
         assert!(!dump.contains("SECRET_PROMPT"));
+    }
+
+    #[test]
+    fn pi_nested_message_usage_matches_real_sessions() {
+        let mut src = PiSource::new();
+        let line = r#"{"type":"message","id":"x","timestamp":"2026-09-11T20:21:32.473Z","message":{"role":"assistant","model":"grok-4.6","usage":{"input":10,"output":40,"cacheRead":5,"cacheWrite":0},"content":[{"type":"text","text":"SECRET_PROMPT"}]}}"#;
+        let d = src
+            .ingest(Path::new("s.jsonl"), IngestKind::Line(line.into()))
+            .unwrap();
+        assert_eq!(d.agent, AgentKind::Pi);
+        assert_eq!(d.out, 40);
+        assert_eq!(d.model.as_str(), "grok-4.6");
+        assert!(!format!("{d:?}").contains("SECRET_PROMPT"));
     }
 }

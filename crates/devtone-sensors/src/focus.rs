@@ -111,7 +111,57 @@ pub fn linux_active_window() -> Option<WindowInfo> {
 }
 
 fn kwin_active() -> Option<WindowInfo> {
-    None
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+    let mut child = Command::new("kwindowprop")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let t0 = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => break,
+            Ok(Some(_)) => return None,
+            Ok(None) if t0.elapsed() > Duration::from_millis(80) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(5)),
+            Err(_) => return None,
+        }
+    }
+    let out = child.stdout.take()?;
+    let mut buf = Vec::new();
+    let _ = std::io::Read::read_to_end(&mut std::io::BufReader::new(out), &mut buf);
+    if buf.is_empty() {
+        return None;
+    }
+    parse_kwindowprop(&String::from_utf8_lossy(&buf))
+}
+
+pub fn parse_kwindowprop(text: &str) -> Option<WindowInfo> {
+    let mut pid = None;
+    let mut title = String::new();
+    let mut class = String::new();
+    for line in text.lines() {
+        let Some((k, v)) = line.split_once(':') else {
+            continue;
+        };
+        let v = v.trim();
+        match k.trim() {
+            "pid" => pid = v.parse().ok(),
+            "caption" => title = v.to_string(),
+            "resourceClass" => class = v.to_string(),
+            _ => {}
+        }
+    }
+    Some(WindowInfo {
+        pid: pid?,
+        title,
+        class,
+    })
 }
 
 fn hypr_active() -> Option<WindowInfo> {
@@ -120,13 +170,22 @@ fn hypr_active() -> Option<WindowInfo> {
 
 #[cfg(test)]
 mod tests {
-    use super::{agent_from_cmdline, lang_from_title};
+    use super::{agent_from_cmdline, lang_from_title, parse_kwindowprop};
     use devtone_core::{AgentKind, Lang};
 
     #[test]
     fn lang_from_title_uses_last_ext() {
         assert_eq!(lang_from_title("~/DevTone/crates/devtone-core/src/lib.rs"), Lang::Rs);
         assert_eq!(lang_from_title("main.ts — Konsole"), Lang::Ts);
+    }
+
+    #[test]
+    fn kwindowprop_parses_alacritty() {
+        let text = "pid: 19402\ncaption: ~/DevTone: pi\nresourceClass: Alacritty\n";
+        let w = parse_kwindowprop(text).unwrap();
+        assert_eq!(w.pid, 19402);
+        assert_eq!(w.class, "Alacritty");
+        assert!(w.title.contains("pi"));
     }
 
     #[test]

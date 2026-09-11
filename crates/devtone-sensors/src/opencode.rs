@@ -23,6 +23,9 @@ impl OpenCodeSource {
 }
 
 fn default_db() -> PathBuf {
+    if let Ok(p) = std::env::var("DEVTONE_OPENCODE_DB") {
+        return PathBuf::from(p);
+    }
     dirs_home().join(".local/share/opencode/opencode.db")
 }
 

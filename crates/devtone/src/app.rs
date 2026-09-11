@@ -403,10 +403,23 @@ mod tests {
 
     static ENV: Mutex<()> = Mutex::new(());
 
+    fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+        ENV.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn isolate_roots(tmp: &std::path::Path) {
+        std::env::set_var("DEVTONE_PI_ROOT", tmp.join("pi"));
+        std::env::set_var("DEVTONE_CLAUDE_ROOT", tmp.join("claude"));
+        std::env::set_var("DEVTONE_CODEX_ROOT", tmp.join("codex"));
+        std::env::set_var("DEVTONE_OPENCODE_DB", tmp.join("opencode.db"));
+        let _ = std::fs::create_dir_all(tmp.join("pi"));
+    }
+
     #[test]
     fn headless_no_notch_starts_and_stop_exits() {
-        let _g = ENV.lock().unwrap();
+        let _g = lock_env();
         let dir = tempfile::tempdir().unwrap();
+        isolate_roots(dir.path());
         let path = dir.path().join("devtone.sock");
         std::env::set_var("DEVTONE_SOCK", &path);
         std::env::set_var("DEVTONE_NO_CPAL", "1");
@@ -430,26 +443,27 @@ mod tests {
 
     #[test]
     fn appending_pi_jsonl_updates_status_agent() {
-        let _g = ENV.lock().unwrap();
+        let _g = lock_env();
         let tmp = tempfile::tempdir().unwrap();
+        isolate_roots(tmp.path());
         let sock = tmp.path().join("devtone.sock");
-        let pi_root = tmp.path().join("sessions");
-        std::fs::create_dir_all(&pi_root).unwrap();
+        let pi_root = tmp.path().join("pi");
         let jsonl = pi_root.join("s.jsonl");
         std::fs::write(&jsonl, "").unwrap();
         std::env::set_var("DEVTONE_SOCK", &sock);
-        std::env::set_var("DEVTONE_PI_ROOT", &pi_root);
         std::env::set_var("DEVTONE_NO_CPAL", "1");
-        let handle = std::thread::spawn(|| {
+        let mut cfg = Config::default();
+        cfg.watch_active_window = false;
+        let handle = std::thread::spawn(move || {
             App::run(
                 parse_cli(["devtone", "--headless", "--no-notch"]),
-                Config::default(),
+                cfg,
             )
         });
         std::thread::sleep(std::time::Duration::from_millis(300));
         std::fs::write(
             &jsonl,
-            r#"{"type":"message","role":"assistant","model":"sonnet","usage":{"input":1,"output":20,"cacheRead":0,"cacheWrite":0}}"#,
+            "{\"type\":\"message\",\"message\":{\"role\":\"assistant\",\"model\":\"sonnet\",\"usage\":{\"input\":1,\"output\":20,\"cacheRead\":0,\"cacheWrite\":0}}}\n",
         )
         .unwrap();
         let mut agent = AgentKind::None;

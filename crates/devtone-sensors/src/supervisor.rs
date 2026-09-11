@@ -47,11 +47,12 @@ impl Supervisor {
     pub fn tick(&mut self) -> StateFrame {
         let now_ms = now_ms();
         self.scan(now_ms);
-        let focused = if self.watch_window {
-            self.detect_focus()
+        let win = if self.watch_window {
+            linux_active_window()
         } else {
             None
         };
+        let focused = win.as_ref().and_then(|info| self.agent_from_window(info));
         let agent = arbitrate(self.override_agent, focused, self.last_delta.as_ref(), now_ms);
         let mut frame = StateFrame {
             ts_ms: now_ms,
@@ -74,7 +75,7 @@ impl Supervisor {
                 frame.tools_per_min = d.tools as f32;
             }
         }
-        if let Some(info) = linux_active_window() {
+        if let Some(info) = win {
             frame.lang = lang_from_title(&info.title);
             frame.focus = if focused.is_some() {
                 Focus::AgentCli
@@ -105,8 +106,8 @@ impl Supervisor {
         }
         for path in self.opencode.watch_paths() {
             if let Some(mut d) = self.opencode.ingest(&path, IngestKind::FileChanged) {
-                d.ts_ms = now_ms;
-                self.last_delta = Some(d);
+                d.ts_ms = file_mtime_ms(&path).unwrap_or(now_ms);
+                self.consider(d);
             }
         }
     }
@@ -124,7 +125,20 @@ impl Supervisor {
                     }
                 }
                 None => {
-                    // First sight: tail only. Do not replay history.
+                    // First sight: do not replay the whole file, but seed from the last 256 KiB
+                    // so an already-live session shows up immediately.
+                    let seed_from = len.saturating_sub(256 * 1024);
+                    if let Some(mut d) = self.ingest_range(&file, kind, seed_from, len) {
+                        let mtime = file_mtime_ms(&file).unwrap_or(0);
+                        let stale = now_ms.saturating_sub(mtime) > 90_000;
+                        if stale {
+                            d.out = 0;
+                            d.inn = 0;
+                            d.cache_read = 0;
+                        }
+                        d.ts_ms = mtime.max(1);
+                        self.consider(d);
+                    }
                     self.offsets.insert(file.clone(), len);
                     continue;
                 }
@@ -144,19 +158,10 @@ impl Supervisor {
                         if buf.trim().is_empty() {
                             continue;
                         }
-                        let d = match kind {
-                            AgentKind::Pi => self.pi.ingest(&file, IngestKind::Line(buf.clone())),
-                            AgentKind::ClaudeCode => {
-                                self.claude.ingest(&file, IngestKind::Line(buf.clone()))
-                            }
-                            AgentKind::CodexCli => {
-                                self.codex.ingest(&file, IngestKind::Line(buf.clone()))
-                            }
-                            _ => None,
-                        };
+                        let d = self.ingest_line(&file, kind, &buf);
                         if let Some(mut d) = d {
                             d.ts_ms = now_ms;
-                            self.last_delta = Some(d);
+                            self.consider(d);
                         }
                     }
                     Err(_) => break,
@@ -166,8 +171,52 @@ impl Supervisor {
         }
     }
 
-    fn detect_focus(&self) -> Option<AgentKind> {
-        let info = linux_active_window()?;
+    fn consider(&mut self, d: TokenDelta) {
+        match &self.last_delta {
+            None => self.last_delta = Some(d),
+            Some(prev) if d.ts_ms >= prev.ts_ms => self.last_delta = Some(d),
+            _ => {}
+        }
+    }
+
+    fn ingest_range(&mut self, file: &Path, kind: AgentKind, start: u64, _end: u64) -> Option<TokenDelta> {
+        let mut f = File::open(file).ok()?;
+        f.seek(SeekFrom::Start(start)).ok()?;
+        let mut reader = BufReader::new(f);
+        if start > 0 {
+            let mut skip = String::new();
+            let _ = reader.read_line(&mut skip);
+        }
+        let mut last = None;
+        let mut buf = String::new();
+        loop {
+            buf.clear();
+            match reader.read_line(&mut buf) {
+                Ok(0) => break,
+                Ok(_) => {
+                    if buf.trim().is_empty() {
+                        continue;
+                    }
+                    if let Some(d) = self.ingest_line(file, kind, &buf) {
+                        last = Some(d);
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        last
+    }
+
+    fn ingest_line(&mut self, file: &Path, kind: AgentKind, buf: &str) -> Option<TokenDelta> {
+        match kind {
+            AgentKind::Pi => self.pi.ingest(file, IngestKind::Line(buf.to_string())),
+            AgentKind::ClaudeCode => self.claude.ingest(file, IngestKind::Line(buf.to_string())),
+            AgentKind::CodexCli => self.codex.ingest(file, IngestKind::Line(buf.to_string())),
+            _ => None,
+        }
+    }
+
+    fn agent_from_window(&self, info: &crate::WindowInfo) -> Option<AgentKind> {
         let proc_root = Path::new("/proc");
         if is_terminal_class(&info.class) {
             foreground_agent(proc_root, info.pid)
@@ -212,6 +261,14 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+fn file_mtime_ms(path: &Path) -> Option<u64> {
+    path.metadata()
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::Supervisor;
@@ -228,9 +285,12 @@ mod tests {
             r#"{"type":"message","role":"assistant","model":"old","usage":{"input":1,"output":99,"cacheRead":0,"cacheWrite":0}}"#
         ).unwrap();
         std::env::set_var("DEVTONE_PI_ROOT", root);
+        std::env::set_var("DEVTONE_CLAUDE_ROOT", root.join("no-claude"));
+        std::env::set_var("DEVTONE_CODEX_ROOT", root.join("no-codex"));
+        std::env::set_var("DEVTONE_OPENCODE_DB", root.join("no-opencode.db"));
         let mut sup = Supervisor::new(None, true, false);
         let first = sup.tick();
-        assert_eq!(first.agent, AgentKind::None, "history must not select an agent");
+        assert_eq!(first.agent, AgentKind::Pi, "live session tail should seed the active CLI");
         let mut f = std::fs::OpenOptions::new().append(true).open(&jsonl).unwrap();
         writeln!(
             f,
