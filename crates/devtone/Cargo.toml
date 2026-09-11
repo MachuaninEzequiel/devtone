@@ -1,0 +1,34 @@
+[package]
+name = "devtone"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Lofi daemon + local coding-agent telemetry"
+default-run = "devtone"
+
+[dependencies]
+devtone-core = { workspace = true }
+devtone-engine = { path = "../devtone-engine" }
+devtone-tui = { path = "../devtone-tui", optional = true }
+devtone-notch = { path = "../devtone-notch", optional = true }
+clap = { version = "4", features = ["derive"] }
+serde = { workspace = true }
+toml = "0.8"
+arc-swap = "1"
+crossbeam-channel = "0.5"
+cpal = "0.15"
+ctrlc = "3"
+anyhow = "1"
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+default = ["tui", "notch"]
+tui = ["dep:devtone-tui"]
+notch = ["dep:devtone-notch", "devtone-notch/window"]
+
+[[bin]]
+name = "devtone"
+path = "src/main.rs"
