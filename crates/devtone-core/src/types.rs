@@ -77,6 +77,16 @@ pub enum Scale {
     MajorPent,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum Groove {
+    #[default]
+    Tight,
+    Warm,
+    Busy,
+    Dry,
+    Sparse,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct StateFrame {
     pub ts_ms: u64,
@@ -121,6 +131,7 @@ pub struct MusicParams {
     pub bpm: f32,
     pub root_midi: u8,
     pub scale: Scale,
+    pub groove: Groove,
     pub swing: f32,
     pub layers: LayerMix,
     pub cutoff_hz: f32,
@@ -135,6 +146,7 @@ impl Default for MusicParams {
             bpm: 78.0,
             root_midi: 50,
             scale: Scale::Dorian,
+            groove: Groove::Tight,
             swing: 0.55,
             layers: LayerMix::default(),
             cutoff_hz: 1800.0,

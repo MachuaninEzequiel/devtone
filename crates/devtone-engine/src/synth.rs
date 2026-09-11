@@ -1,4 +1,4 @@
-use devtone_core::{MusicParams, SpectrumSnap};
+use devtone_core::{degree_midi, Groove, MusicParams, SpectrumSnap};
 
 use crate::drum::{make_hat, make_kick, make_snare};
 use crate::spectrum::compute_spectrum;
@@ -27,6 +27,8 @@ pub struct Engine {
     pad_lp: f32,
     lead_phase: f32,
     lead_env: f32,
+    lead_midi: f32,
+    bass_midi: f32,
     comb: [Vec<f32>; 4],
     comb_i: [usize; 4],
     ap: [Vec<f32>; 2],
@@ -64,6 +66,8 @@ impl Engine {
             pad_lp: 0.0,
             lead_phase: 0.0,
             lead_env: 0.0,
+            lead_midi: 74.0,
+            bass_midi: 50.0,
             comb,
             comb_i: [0; 4],
             ap,
@@ -185,7 +189,6 @@ impl Engine {
         self.last_step = step;
         let s = step.rem_euclid(16) as i32;
         if s % 2 == 1 {
-            // Odd 16ths are delayed by swing; skip if we have not reached the delayed phase.
             let frac = raw_steps - step as f64;
             let delay = (swing as f64 - 0.5) * 2.0;
             if frac < delay {
@@ -193,17 +196,23 @@ impl Engine {
                 return;
             }
         }
-        if s == 0 || s == 8 {
+        let bar = (step.div_euclid(16)).rem_euclid(8) as i32;
+        let (kick_m, snare_m, hat_m) = groove_masks(self.params.groove);
+        if bit(kick_m, s) {
             self.kick_pos = Some(0.0);
         }
-        if s == 4 || s == 12 {
+        if bit(snare_m, s) || (bar == 7 && s >= 14 && self.params.layers.lead > 0.3) {
             self.snare_pos = Some(0.0);
         }
-        if s % 2 == 0 || self.params.layers.hat > 0.45 {
+        if bit(hat_m, s) {
             self.hat_pos = Some(0.0);
         }
-        if s == 0 {
-            self.lead_env = if self.params.layers.lead > 0.05 { 1.0 } else { 0.0 };
+        let chord = [0usize, 2, 4, 0][(bar as usize) % 4];
+        self.bass_midi = degree_midi(self.params.root_midi, self.params.scale, chord, 0);
+        if self.params.layers.lead > 0.08 && matches!(s, 0 | 3 | 6 | 8 | 11 | 14) {
+            let deg = (bar as usize * 2 + s as usize / 3) % 8;
+            self.lead_midi = degree_midi(self.params.root_midi, self.params.scale, deg, 2);
+            self.lead_env = 1.0;
         }
     }
 
@@ -228,29 +237,34 @@ impl Engine {
     }
 
     fn bass_sample(&mut self) -> f32 {
-        let root = self.params.root_midi as f32;
-        let fifth = root + 7.0;
-        let beats = self.frames as f32 * self.params.bpm / (60.0 * self.sample_rate);
-        let midi = if (beats as i32 % 2) == 0 { root } else { fifth };
-        let hz = midi_hz(midi);
+        let hz = midi_hz(self.bass_midi);
         self.bass_phase += hz / self.sample_rate;
         self.bass_phase -= self.bass_phase.floor();
         let t = self.bass_phase * 2.0 * std::f32::consts::PI;
-        (t.sin() + 0.35 * (2.0 * t).sin()) * 0.28
+        (t.sin() + 0.35 * (2.0 * t).sin()) * 0.32
     }
 
     fn pad_sample(&mut self) -> f32 {
-        let hz = midi_hz(self.params.root_midi as f32 + 12.0);
-        let cents = 7.0 / 1200.0;
-        let hz2 = hz * 2f32.powf(cents);
+        let beats = self.frames as f32 * self.params.bpm / (60.0 * self.sample_rate);
+        let lfo = 1.0 + 0.18 * (beats * std::f32::consts::PI / 8.0).sin();
+        let midi_a = degree_midi(self.params.root_midi, self.params.scale, 0, 1);
+        let midi_b = degree_midi(self.params.root_midi, self.params.scale, 2, 1);
+        let hz = midi_hz(midi_a);
+        let hz2 = midi_hz(midi_b) * 2f32.powf(7.0 / 1200.0);
         self.pad_phase[0] += hz / self.sample_rate;
         self.pad_phase[1] += hz2 / self.sample_rate;
         self.pad_phase[0] -= self.pad_phase[0].floor();
         self.pad_phase[1] -= self.pad_phase[1].floor();
         let saw = |p: f32| p * 2.0 - 1.0;
-        let mixed = (saw(self.pad_phase[0]) + saw(self.pad_phase[1])) * 0.18;
-        let coeff = 1.0 - (-2.0 * std::f32::consts::PI * self.params.cutoff_hz / self.sample_rate).exp();
-        self.pad_lp += coeff.clamp(0.001, 0.99) * (mixed - self.pad_lp);
+        let mixed = (saw(self.pad_phase[0]) + saw(self.pad_phase[1])) * 0.16;
+        let tense = if self.params.tension > 0.05 {
+            (beats * 2.2).sin() * self.params.tension * 0.08
+        } else {
+            0.0
+        };
+        let cutoff = (self.params.cutoff_hz * lfo).clamp(400.0, 4200.0);
+        let coeff = 1.0 - (-2.0 * std::f32::consts::PI * cutoff / self.sample_rate).exp();
+        self.pad_lp += coeff.clamp(0.001, 0.99) * (mixed + tense - self.pad_lp);
         self.pad_lp
     }
 
@@ -258,13 +272,12 @@ impl Engine {
         if self.lead_env <= 0.0001 {
             return 0.0;
         }
-        self.lead_env *= 0.9996;
-        let hz = midi_hz(self.params.root_midi as f32 + 24.0);
+        self.lead_env *= 0.9994;
+        let hz = midi_hz(self.lead_midi);
         self.lead_phase += hz / self.sample_rate;
         self.lead_phase -= self.lead_phase.floor();
-        // 5% duty pulse, softened.
-        let pulse = if self.lead_phase < 0.05 { 1.0 } else { -0.05 };
-        pulse * self.lead_env * 0.15
+        let t = self.lead_phase * 2.0 * std::f32::consts::PI;
+        t.sin() * self.lead_env * 0.22
     }
 
     fn reverb_sample(&mut self, x: f32) -> f32 {
@@ -306,6 +319,21 @@ fn take_table(pos: &mut Option<f32>, table: &[f32]) -> f32 {
 
 fn midi_hz(midi: f32) -> f32 {
     440.0 * 2f32.powf((midi - 69.0) / 12.0)
+}
+
+fn bit(mask: u16, step: i32) -> bool {
+    mask & (1 << (step.rem_euclid(16) as u16)) != 0
+}
+
+fn groove_masks(groove: Groove) -> (u16, u16, u16) {
+    // bit0 = step 0. (kick, snare, hat)
+    match groove {
+        Groove::Tight => (0x0101, 0x1010, 0x5555),
+        Groove::Warm => (0x0081, 0x0010, 0x1111),
+        Groove::Busy => (0x0521, 0x2910, 0xFFFF),
+        Groove::Dry => (0x0101, 0x1010, 0x1111),
+        Groove::Sparse => (0x0001, 0x0100, 0x0001),
+    }
 }
 
 #[cfg(test)]

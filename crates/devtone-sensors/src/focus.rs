@@ -27,7 +27,18 @@ pub fn lang_from_title(title: &str) -> Lang {
 }
 
 /// Newest source file under `root` wins. Skips build/VCS dirs. No file contents.
+/// If `pruebas/` has a recent file, that folder wins so language tests are audible.
 pub fn lang_from_recent_sources(root: &Path) -> Option<Lang> {
+    let pruebas = root.join("pruebas");
+    if pruebas.is_dir() {
+        let mut best: Option<(std::time::SystemTime, Lang)> = None;
+        walk_sources(&pruebas, 0, &mut best);
+        if let Some((t, lang)) = best {
+            if t.elapsed().map(|d| d.as_secs() < 180).unwrap_or(true) {
+                return Some(lang);
+            }
+        }
+    }
     let mut best: Option<(std::time::SystemTime, Lang)> = None;
     walk_sources(root, 0, &mut best);
     best.map(|(_, lang)| lang)

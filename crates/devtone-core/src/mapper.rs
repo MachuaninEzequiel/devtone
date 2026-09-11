@@ -46,7 +46,8 @@ impl Mapper {
             && !state.agent_streaming
             && state.flow <= 0.15;
 
-        let (scale, root, mut cutoff, mut reverb, mut pad, mut hat) = lang_targets(state.lang);
+        let (scale, root, groove, mut cutoff, mut reverb, mut pad, mut hat, vinyl, bass, swing) =
+            lang_targets(state.lang);
 
         if state.agent_streaming {
             pad += 0.35;
@@ -62,17 +63,27 @@ impl Mapper {
             pad += 0.10;
         }
 
-        let mut kick = 0.45;
+        let mut kick = match groove {
+            crate::Groove::Busy => 0.55,
+            crate::Groove::Sparse => 0.22,
+            crate::Groove::Dry => 0.50,
+            crate::Groove::Warm => 0.32,
+            crate::Groove::Tight => 0.48,
+        };
         if state.tools_per_min > 8.0 {
-            kick += 0.20;
+            kick += 0.22;
         }
 
-        let mut bpm = 78.0;
+        let mut bpm = match groove {
+            crate::Groove::Busy => 84.0,
+            crate::Groove::Sparse => 70.0,
+            crate::Groove::Warm => 74.0,
+            crate::Groove::Dry => 80.0,
+            crate::Groove::Tight => 76.0,
+        };
         let mut crackle = 0.04;
         let mut tension = 0.0;
-        let mut lead = if state.agent_streaming { 0.22 } else { 0.0 };
-        let vinyl = 0.35;
-        let bass = 0.35;
+        let mut lead = if state.agent_streaming { 0.55 } else { 0.12 };
 
         if matches!(state.focus, Focus::Terminal | Focus::AgentCli) && state.stress > 0.4 {
             tension += state.stress;
@@ -99,8 +110,9 @@ impl Mapper {
 
         let p = &mut self.params;
         p.scale = scale;
-        p.root_midi = ema(p.root_midi as f32, root as f32, ALPHA_SLOW).round() as u8;
-        p.bpm = ema(p.bpm, bpm, ALPHA_SLOW);
+        p.groove = groove;
+        p.root_midi = ema(p.root_midi as f32, root as f32, ALPHA_FAST).round() as u8;
+        p.bpm = ema(p.bpm, bpm, ALPHA_MID);
         p.reverb = ema(p.reverb, reverb, ALPHA_SLOW);
         p.layers.hat = ema(p.layers.hat, hat, ALPHA_MID);
         p.cutoff_hz = ema(p.cutoff_hz, cutoff, ALPHA_MID);
@@ -112,7 +124,7 @@ impl Mapper {
         p.layers.lead = ema(p.layers.lead, lead, ALPHA_FAST);
         p.crackle = ema(p.crackle, crackle, ALPHA_MID);
         p.tension = ema(p.tension, tension, ALPHA_MID);
-        p.swing = ema(p.swing, 0.55, ALPHA_SLOW);
+        p.swing = ema(p.swing, swing, ALPHA_MID);
 
         p.bpm = clamp(p.bpm, 68.0, 92.0);
         p.layers = LayerMix {
@@ -128,15 +140,16 @@ impl Mapper {
     }
 }
 
-fn lang_targets(lang: Lang) -> (Scale, u8, f32, f32, f32, f32) {
-    // scale, root_midi, cutoff, reverb, pad, hat
+fn lang_targets(lang: Lang) -> (Scale, u8, crate::Groove, f32, f32, f32, f32, f32, f32, f32) {
+    // scale, root, groove, cutoff, reverb, pad, hat, vinyl, bass, swing
+    use crate::Groove::*;
     match lang {
-        Lang::Rs => (Scale::Dorian, 50, 1400.0, 0.16, 0.28, 0.38),
-        Lang::Py => (Scale::MinorPentatonic, 48, 1900.0, 0.22, 0.42, 0.36),
-        Lang::Ts => (Scale::MajorPent, 53, 2200.0, 0.18, 0.32, 0.50),
-        Lang::Go => (Scale::Dorian, 52, 1600.0, 0.08, 0.26, 0.40),
-        Lang::Sql => (Scale::MinorPentatonic, 48, 1200.0, 0.20, 0.30, 0.30),
-        Lang::Other => (Scale::Dorian, 50, 1800.0, 0.18, 0.30, 0.40),
+        Lang::Rs => (Scale::Dorian, 50, Tight, 1200.0, 0.12, 0.22, 0.35, 0.28, 0.45, 0.52),
+        Lang::Py => (Scale::MinorPentatonic, 45, Warm, 2400.0, 0.32, 0.62, 0.22, 0.40, 0.38, 0.60),
+        Lang::Ts => (Scale::MajorPent, 57, Busy, 3200.0, 0.14, 0.28, 0.78, 0.22, 0.40, 0.54),
+        Lang::Go => (Scale::Dorian, 47, Dry, 900.0, 0.04, 0.18, 0.30, 0.20, 0.55, 0.50),
+        Lang::Sql => (Scale::MinorPentatonic, 41, Sparse, 800.0, 0.38, 0.70, 0.12, 0.45, 0.25, 0.58),
+        Lang::Other => (Scale::Dorian, 50, Tight, 1800.0, 0.18, 0.30, 0.40, 0.35, 0.35, 0.55),
     }
 }
 
@@ -159,7 +172,28 @@ mod tests {
         s.ts_ms = 1;
         let p = m.tick(&s);
         assert_eq!(p.scale, Scale::Dorian);
+        assert_eq!(p.groove, crate::Groove::Tight);
         assert_eq!(p.root_midi, 50);
+    }
+
+    #[test]
+    fn python_and_ts_are_different_grooves() {
+        let mut a = Mapper::new();
+        let mut b = Mapper::new();
+        let mut py = StateFrame::default();
+        py.lang = Lang::Py;
+        py.ts_ms = 1;
+        let mut ts = StateFrame::default();
+        ts.lang = Lang::Ts;
+        ts.ts_ms = 1;
+        let p = a.tick(&py);
+        let t = b.tick(&ts);
+        assert_eq!(p.scale, Scale::MinorPentatonic);
+        assert_eq!(t.scale, Scale::MajorPent);
+        assert_eq!(p.groove, crate::Groove::Warm);
+        assert_eq!(t.groove, crate::Groove::Busy);
+        assert!(t.layers.hat > p.layers.hat);
+        assert!(p.layers.pad > t.layers.pad);
     }
 
     #[test]
