@@ -8,6 +8,7 @@ pub struct Cli {
     pub command: CommandMode,
     pub headless: bool,
     pub no_notch: bool,
+    pub notch: bool,
     pub intensity: Option<f32>,
     pub agent: Option<AgentKind>,
 }
@@ -26,6 +27,8 @@ struct RawCli {
     headless: bool,
     #[arg(long, global = true)]
     no_notch: bool,
+    #[arg(long, global = true)]
+    notch: bool,
     #[arg(long, global = true)]
     intensity: Option<f32>,
     #[arg(long, global = true)]
@@ -59,9 +62,26 @@ where
         command,
         headless: raw.headless,
         no_notch: raw.no_notch,
+        notch: raw.notch,
         intensity: raw.intensity,
         agent,
     }
+}
+
+/// Overlay HUD. Off on Wayland unless `--notch`: KWin treats a 36px
+/// undecorated always-on-top window as a resize handle and steals the pointer.
+pub fn notch_enabled(headless: bool, no_notch: bool, force_notch: bool, cfg_notch: bool, wayland: bool) -> bool {
+    if headless || no_notch {
+        return false;
+    }
+    if force_notch {
+        return true;
+    }
+    cfg_notch && !wayland
+}
+
+pub fn is_wayland() -> bool {
+    std::env::var_os("WAYLAND_DISPLAY").is_some()
 }
 
 #[cfg(test)]
@@ -77,5 +97,14 @@ mod tests {
             _ => panic!("expected status"),
         }
         assert_eq!(c.agent, Some(AgentKind::Pi));
+    }
+
+    #[test]
+    fn notch_stays_off_on_wayland_unless_forced() {
+        use super::notch_enabled;
+        assert!(!notch_enabled(false, false, false, true, true));
+        assert!(notch_enabled(false, false, true, false, true));
+        assert!(!notch_enabled(false, true, true, true, false));
+        assert!(!notch_enabled(true, false, true, true, false));
     }
 }

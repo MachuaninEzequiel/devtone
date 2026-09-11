@@ -69,7 +69,13 @@ impl App {
         #[cfg(not(feature = "tui"))]
         let tui_join = None::<thread::JoinHandle<()>>;
 
-        let notch_wanted = cfg.notch && !cli.no_notch && !cli.headless;
+        let notch_wanted = crate::cli::notch_enabled(
+            cli.headless,
+            cli.no_notch,
+            cli.notch,
+            cfg.notch,
+            crate::cli::is_wayland(),
+        );
 
         if notch_wanted {
             #[cfg(feature = "notch")]
@@ -323,23 +329,37 @@ fn spawn_tui(
     thread::Builder::new()
         .name("devtone-tui".into())
         .spawn(move || {
-            use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+            use crossterm::event::{self, DisableMouseCapture, Event, KeyCode, KeyModifiers};
             use crossterm::execute;
             use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
             use ratatui::backend::CrosstermBackend;
             use ratatui::Terminal;
-            use std::io::stdout;
+            use std::io::{stdout, Write};
+
+            let restore = || {
+                let mut out = stdout();
+                let _ = execute!(out, DisableMouseCapture, LeaveAlternateScreen);
+                let _ = disable_raw_mode();
+                let _ = out.flush();
+            };
+            let prev_hook = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |info| {
+                let mut out = stdout();
+                let _ = execute!(out, DisableMouseCapture, LeaveAlternateScreen);
+                let _ = disable_raw_mode();
+                prev_hook(info);
+            }));
 
             if enable_raw_mode().is_err() {
                 return;
             }
             let mut out = stdout();
-            let _ = execute!(out, EnterAlternateScreen);
+            let _ = execute!(out, DisableMouseCapture, EnterAlternateScreen);
             let backend = CrosstermBackend::new(out);
             let mut terminal = match Terminal::new(backend) {
                 Ok(t) => t,
                 Err(_) => {
-                    let _ = disable_raw_mode();
+                    restore();
                     return;
                 }
             };
@@ -385,8 +405,7 @@ fn spawn_tui(
                     thread::sleep(sleep);
                 }
             }
-            let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
-            let _ = disable_raw_mode();
+            restore();
         })
         .expect("tui thread")
 }

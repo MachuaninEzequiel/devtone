@@ -13,7 +13,7 @@ use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
-use winit::window::{Window, WindowId, WindowLevel};
+use winit::window::{CursorIcon, Window, WindowButtons, WindowId, WindowLevel};
 
 use crate::draw::{draw_notch, hit_bars, hit_quit, NOTCH_H, NOTCH_W};
 
@@ -58,14 +58,22 @@ impl ApplicationHandler for NotchApp {
         if self.window.is_some() {
             return;
         }
+        let size = LogicalSize::new(NOTCH_W, NOTCH_H);
         let attrs = Window::default_attributes()
             .with_title("devtone")
             .with_decorations(false)
             .with_resizable(false)
-            .with_inner_size(LogicalSize::new(NOTCH_W, NOTCH_H))
+            .with_enabled_buttons(WindowButtons::empty())
+            .with_inner_size(size)
+            .with_min_inner_size(size)
+            .with_max_inner_size(size)
             .with_window_level(WindowLevel::AlwaysOnTop);
         match event_loop.create_window(attrs) {
             Ok(window) => {
+                window.set_resizable(false);
+                window.set_min_inner_size(Some(size));
+                window.set_max_inner_size(Some(size));
+                window.set_cursor(CursorIcon::Default);
                 let window = Arc::new(window);
                 match softbuffer::Context::new(window.clone()) {
                     Ok(ctx) => match softbuffer::Surface::new(&ctx, window.clone()) {
@@ -101,6 +109,7 @@ impl ApplicationHandler for NotchApp {
                 self.cursor = (position.x, position.y);
                 self.dots_hover = hit_quit(position.x, position.y);
                 if let Some(w) = &self.window {
+                    w.set_cursor(CursorIcon::Default);
                     w.request_redraw();
                 }
             }
@@ -125,7 +134,9 @@ impl ApplicationHandler for NotchApp {
                         }
                     }
                     self.last_click = Some(now);
-                    self.dragging = true;
+                    if let Some(w) = &self.window {
+                        let _ = w.drag_window();
+                    }
                 }
             }
             WindowEvent::MouseInput {
@@ -134,6 +145,9 @@ impl ApplicationHandler for NotchApp {
                 ..
             } => {
                 self.dragging = false;
+                if let Some(w) = &self.window {
+                    w.set_cursor(CursorIcon::Default);
+                }
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.logical_key == Key::Named(NamedKey::Escape) && event.state.is_pressed() {

@@ -17,7 +17,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             intensity: 0.8,
-            notch: true,
+            notch: false,
             notch_follow_focus: false,
             fps_tui: 20,
             fps_notch: 12,

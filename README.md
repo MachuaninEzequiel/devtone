@@ -39,8 +39,9 @@ macOS / Windows compile stubs exist; **Linux is the tested platform**.
 ## Use
 
 ```bash
-devtone                 # audio + TUI + notch HUD
-devtone --no-notch      # audio + TUI, no overlay (safest on Wayland)
+devtone                 # audio + TUI (no overlay on Wayland)
+devtone --no-notch      # never open the HUD
+devtone --notch         # force the always-on-top HUD (can steal clicks on KWin)
 devtone --headless      # audio + socket, no TUI (tmux / background)
 devtone --agent pi      # force the active CLI
 devtone --intensity 0.7
@@ -58,7 +59,7 @@ Only one daemon. A second `devtone` talks to the socket at `~/.local/state/devto
 | `n` | destroy / recreate the notch |
 | `1` `2` `3` `4` | intensity 25 / 50 / 75 / 100 |
 
-Notch HUD (280×36, always-on-top): left dots quit, double-click bars mute, drag bars to move, Esc quits. On KWin/Wayland this is best-effort — if it misbehaves, `--no-notch` is first-class, not an afterthought.
+Notch HUD (280×36, always-on-top): left dots quit, double-click bars mute, drag bars to move, Esc quits. **Off by default on Wayland.** An undecorated 36px window looks like a resize edge to KWin and can grab the pointer (crosshair cursor, clicks go nowhere). Use `--notch` only if you want to try it; `--no-notch` always wins.
 
 ## How it knows which CLI is active
 
