@@ -1,6 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["crates/devtone-core", "crates/devtone-engine"]
+members = [
+    "crates/devtone-core",
+    "crates/devtone-engine",
+    "crates/devtone-tui",
+]
 
 [workspace.package]
 version = "0.1.0"
