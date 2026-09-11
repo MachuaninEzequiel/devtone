@@ -8,12 +8,13 @@ use crate::arbitrate::arbitrate;
 use crate::claude::ClaudeSource;
 use crate::codex::CodexSource;
 use crate::focus::{
-    agent_from_cmdline, foreground_agent, is_terminal_class, lang_from_title, linux_active_window,
+    agent_from_cmdline, foreground_agent, is_terminal_class, lang_from_recent_sources,
+    lang_from_title, linux_active_window,
 };
 use crate::opencode::OpenCodeSource;
 use crate::pi::PiSource;
 use crate::source::{AgentSource, IngestKind};
-use devtone_core::{AgentKind, Focus, StateFrame, TokenDelta};
+use devtone_core::{AgentKind, Focus, Lang, StateFrame, TokenDelta};
 
 pub struct Supervisor {
     pi: PiSource,
@@ -89,6 +90,13 @@ impl Supervisor {
             } else {
                 Focus::Other
             };
+        }
+        if frame.lang == Lang::Other {
+            if let Ok(cwd) = std::env::current_dir() {
+                if let Some(lang) = lang_from_recent_sources(&cwd) {
+                    frame.lang = lang;
+                }
+            }
         }
         if frame.agent != AgentKind::None {
             frame.flow = if frame.agent_streaming { 0.8 } else { 0.35 };

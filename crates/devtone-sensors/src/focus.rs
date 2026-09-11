@@ -2,22 +2,73 @@ use std::path::Path;
 
 use devtone_core::{AgentKind, Lang};
 
+pub fn lang_from_ext(ext: &str) -> Option<Lang> {
+    match ext.to_ascii_lowercase().as_str() {
+        "rs" => Some(Lang::Rs),
+        "py" => Some(Lang::Py),
+        "ts" | "tsx" | "js" | "jsx" => Some(Lang::Ts),
+        "go" => Some(Lang::Go),
+        "sql" => Some(Lang::Sql),
+        _ => None,
+    }
+}
+
 pub fn lang_from_title(title: &str) -> Lang {
     let mut last = Lang::Other;
     for tok in title.split(|c: char| c.is_whitespace() || matches!(c, ',' | '|' | '—' | '-' | '(' | ')')) {
         let t = tok.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '_');
         if let Some((_, ext)) = t.rsplit_once('.') {
-            last = match ext.to_ascii_lowercase().as_str() {
-                "rs" => Lang::Rs,
-                "py" => Lang::Py,
-                "ts" | "tsx" | "js" | "jsx" => Lang::Ts,
-                "go" => Lang::Go,
-                "sql" => Lang::Sql,
-                _ => last,
-            };
+            if let Some(lang) = lang_from_ext(ext) {
+                last = lang;
+            }
         }
     }
     last
+}
+
+/// Newest source file under `root` wins. Skips build/VCS dirs. No file contents.
+pub fn lang_from_recent_sources(root: &Path) -> Option<Lang> {
+    let mut best: Option<(std::time::SystemTime, Lang)> = None;
+    walk_sources(root, 0, &mut best);
+    best.map(|(_, lang)| lang)
+}
+
+fn walk_sources(dir: &Path, depth: u8, best: &mut Option<(std::time::SystemTime, Lang)>) {
+    if depth > 5 {
+        return;
+    }
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for ent in rd.flatten() {
+        let path = ent.path();
+        let name = ent.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with('.') || matches!(name.as_ref(), "target" | "node_modules" | "dist") {
+            continue;
+        }
+        if path.is_dir() {
+            walk_sources(&path, depth + 1, best);
+            continue;
+        }
+        let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+            continue;
+        };
+        let Some(lang) = lang_from_ext(ext) else {
+            continue;
+        };
+        let Ok(meta) = ent.metadata() else {
+            continue;
+        };
+        let Ok(mtime) = meta.modified() else {
+            continue;
+        };
+        match best {
+            None => *best = Some((mtime, lang)),
+            Some((t, _)) if mtime >= *t => *best = Some((mtime, lang)),
+            _ => {}
+        }
+    }
 }
 
 pub fn agent_from_cmdline(cmdline: &str) -> Option<AgentKind> {
@@ -170,13 +221,22 @@ fn hypr_active() -> Option<WindowInfo> {
 
 #[cfg(test)]
 mod tests {
-    use super::{agent_from_cmdline, lang_from_title, parse_kwindowprop};
+    use super::{agent_from_cmdline, lang_from_recent_sources, lang_from_title, parse_kwindowprop};
     use devtone_core::{AgentKind, Lang};
 
     #[test]
     fn lang_from_title_uses_last_ext() {
         assert_eq!(lang_from_title("~/DevTone/crates/devtone-core/src/lib.rs"), Lang::Rs);
         assert_eq!(lang_from_title("main.ts — Konsole"), Lang::Ts);
+    }
+
+    #[test]
+    fn recent_source_file_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("old.rs"), "fn a() {}").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(dir.path().join("new.py"), "x = 1\n").unwrap();
+        assert_eq!(lang_from_recent_sources(dir.path()), Some(Lang::Py));
     }
 
     #[test]
