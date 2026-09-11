@@ -1,7 +1,7 @@
 use devtone_core::{MusicParams, SpectrumSnap};
 
 use crate::drum::{make_hat, make_kick, make_snare};
-use crate::spectrum::dummy_spectrum;
+use crate::spectrum::compute_spectrum;
 
 const COMB_MS: [f32; 4] = [29.7, 37.1, 41.1, 43.7];
 const AP_MS: [f32; 2] = [5.0, 1.7];
@@ -33,6 +33,9 @@ pub struct Engine {
     ap_i: [usize; 2],
     fade_gain: f32,
     fade_step: f32,
+    mix_hist: [f32; 256],
+    mix_i: usize,
+    blocks: u32,
 }
 
 impl Engine {
@@ -67,6 +70,9 @@ impl Engine {
             ap_i: [0; 2],
             fade_gain: 1.0,
             fade_step: 0.0,
+            mix_hist: [0.0; 256],
+            mix_i: 0,
+            blocks: 0,
         }
     }
 
@@ -118,7 +124,6 @@ impl Engine {
             return;
         }
 
-        let sr = self.sample_rate;
         let bpm = self.params.bpm.clamp(68.0, 92.0);
         let swing = self.params.swing.clamp(0.5, 0.66);
         let layers = self.params.layers;
@@ -155,12 +160,19 @@ impl Engine {
             } else {
                 pair[0] = i16s;
             }
+            self.mix_hist[self.mix_i] = s;
+            self.mix_i = (self.mix_i + 1) % 256;
             self.frames += 1;
-            let _ = inv_sr;
         }
 
-        let t_ms = (self.frames as f32 * 1000.0 / sr) as u64;
-        self.snap = dummy_spectrum(t_ms);
+        self.blocks += 1;
+        if self.blocks % 3 == 0 {
+            let mut ordered = [0.0f32; 256];
+            for i in 0..256 {
+                ordered[i] = self.mix_hist[(self.mix_i + i) % 256];
+            }
+            self.snap = compute_spectrum(&ordered, &self.params.layers, &self.snap);
+        }
     }
 
     fn advance_sequencer(&mut self, bpm: f32, swing: f32) {

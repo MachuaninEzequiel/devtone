@@ -7,3 +7,4 @@ description = "Lightweight lofi synth and spectrum snapshot"
 
 [dependencies]
 devtone-core = { workspace = true }
+microfft = "0.6"
