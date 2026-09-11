@@ -25,12 +25,8 @@ impl App {
 
         let sock = socket_path();
         if ping(&sock) {
-            if cli.headless {
-                eprintln!("devtone: already running");
-                return ExitCode::from(1);
-            }
-            eprintln!("devtone: already running (attach TUI not yet in this build)");
-            return ExitCode::from(1);
+            eprintln!("devtone: already running (showing live status). stop it with: devtone stop");
+            return client_status(false);
         }
 
         let server = match IpcServer::bind(&sock) {
@@ -61,6 +57,12 @@ impl App {
         // compositor path is safe. `devtone status` / `devtone stop` from another tty.
         let _ = cli.headless;
         eprintln!("devtone: audio daemon (no UI). status / stop from another terminal.");
+        if let Some(p) = std::env::var_os("HOME") {
+            eprintln!(
+                "devtone: watching {}/.pi/agent/sessions (and claude/codex/opencode)",
+                std::path::PathBuf::from(p).display()
+            );
+        }
         ipc_loop(server, tx, rx, state.clone(), muted.clone(), running.clone());
 
         thread::sleep(Duration::from_millis(150));

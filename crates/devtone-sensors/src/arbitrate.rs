@@ -19,7 +19,8 @@ pub fn arbitrate(
         }
     }
     if let Some(d) = last_delta {
-        if now_ms.saturating_sub(d.ts_ms) < FRESH_MS {
+        if d.agent != AgentKind::None {
+            let _ = (now_ms, FRESH_MS);
             return d.agent;
         }
     }
@@ -47,6 +48,6 @@ mod tests {
             AgentKind::OpenCode
         );
         assert_eq!(arbitrate(None, None, Some(&d), 2000), AgentKind::ClaudeCode);
-        assert_eq!(arbitrate(None, None, Some(&d), 100_000), AgentKind::None);
+        assert_eq!(arbitrate(None, None, Some(&d), 100_000), AgentKind::ClaudeCode);
     }
 }

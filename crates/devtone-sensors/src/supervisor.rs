@@ -53,7 +53,12 @@ impl Supervisor {
             None
         };
         let focused = win.as_ref().and_then(|info| self.agent_from_window(info));
-        let agent = arbitrate(self.override_agent, focused, self.last_delta.as_ref(), now_ms);
+        let mut agent = arbitrate(self.override_agent, focused, self.last_delta.as_ref(), now_ms);
+        if agent == AgentKind::None {
+            if let Some(k) = running_cli() {
+                agent = k;
+            }
+        }
         let mut frame = StateFrame {
             ts_ms: now_ms,
             agent,
@@ -254,6 +259,23 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>, depth: u8) {
     }
 }
 
+fn running_cli() -> Option<AgentKind> {
+    let rd = std::fs::read_dir("/proc").ok()?;
+    let mut found = None;
+    for ent in rd.flatten() {
+        let Some(pid) = ent.file_name().to_str().and_then(|s| s.parse::<u32>().ok()) else {
+            continue;
+        };
+        let Ok(cmd) = std::fs::read_to_string(format!("/proc/{pid}/cmdline")) else {
+            continue;
+        };
+        if let Some(k) = agent_from_cmdline(&cmd) {
+            found = Some(k);
+        }
+    }
+    found
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -274,6 +296,29 @@ mod tests {
     use super::Supervisor;
     use devtone_core::AgentKind;
     use std::io::Write;
+
+    #[test]
+    fn live_pi_sessions_if_present() {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let root = std::path::PathBuf::from(home).join(".pi/agent/sessions");
+        if !root.exists() {
+            return;
+        }
+        std::env::set_var("DEVTONE_PI_ROOT", &root);
+        std::env::set_var("DEVTONE_CLAUDE_ROOT", "/tmp/devtone-no-claude");
+        std::env::set_var("DEVTONE_CODEX_ROOT", "/tmp/devtone-no-codex");
+        std::env::set_var("DEVTONE_OPENCODE_DB", "/tmp/devtone-no-opencode.db");
+        let mut sup = Supervisor::new(None, true, false);
+        let frame = sup.tick();
+        eprintln!(
+            "live tick agent={:?} model={} tps={:.1} stream={}",
+            frame.agent,
+            frame.model.as_str(),
+            frame.out_tps,
+            frame.agent_streaming
+        );
+        assert_ne!(frame.agent, AgentKind::None, "expected to seed pi from live sessions");
+    }
 
     #[test]
     fn ignores_historical_jsonl_until_append() {
