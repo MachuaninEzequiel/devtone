@@ -1,0 +1,4 @@
+bg = "#0B0C10"
+bars = ["#B7A9F5", "#F3C56B", "#E8A0B4", "#A8E0C8", "#C9B8F0"]
+dots = "#3A3D46"
+dot_on = "#E8E6EF"

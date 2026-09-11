@@ -134,6 +134,7 @@ impl Drop for IpcServer {
     }
 }
 
+#[cfg(test)]
 pub fn run_test_loop(path: &Path) {
     let (tx, rx) = crossbeam_channel::bounded::<Command>(4);
     let server = IpcServer::bind(path).expect("bind");

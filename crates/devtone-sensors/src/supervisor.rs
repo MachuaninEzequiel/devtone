@@ -7,7 +7,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::arbitrate::arbitrate;
 use crate::claude::ClaudeSource;
 use crate::codex::CodexSource;
-use crate::focus::{agent_from_cmdline, foreground_agent, is_terminal_class, lang_from_title, linux_active_window};
+use crate::focus::{
+    agent_from_cmdline, foreground_agent, is_terminal_class, lang_from_title, linux_active_window,
+};
 use crate::opencode::OpenCodeSource;
 use crate::pi::PiSource;
 use crate::source::{AgentSource, IngestKind};
@@ -111,10 +113,22 @@ impl Supervisor {
 
     fn scan_jsonl_root(&mut self, root: &Path, now_ms: u64, kind: AgentKind) {
         for file in jsonl_files(root) {
-            let off = self.offsets.get(&file).copied().unwrap_or(0);
             let Ok(mut f) = File::open(&file) else { continue };
             let Ok(len) = f.metadata().map(|m| m.len()) else { continue };
-            let start = if len < off { 0 } else { off };
+            let start = match self.offsets.get(&file) {
+                Some(&off) => {
+                    if len < off {
+                        0
+                    } else {
+                        off
+                    }
+                }
+                None => {
+                    // First sight: tail only. Do not replay history.
+                    self.offsets.insert(file.clone(), len);
+                    continue;
+                }
+            };
             if f.seek(SeekFrom::Start(start)).is_err() {
                 continue;
             }
@@ -132,8 +146,12 @@ impl Supervisor {
                         }
                         let d = match kind {
                             AgentKind::Pi => self.pi.ingest(&file, IngestKind::Line(buf.clone())),
-                            AgentKind::ClaudeCode => self.claude.ingest(&file, IngestKind::Line(buf.clone())),
-                            AgentKind::CodexCli => self.codex.ingest(&file, IngestKind::Line(buf.clone())),
+                            AgentKind::ClaudeCode => {
+                                self.claude.ingest(&file, IngestKind::Line(buf.clone()))
+                            }
+                            AgentKind::CodexCli => {
+                                self.codex.ingest(&file, IngestKind::Line(buf.clone()))
+                            }
                             _ => None,
                         };
                         if let Some(mut d) = d {
@@ -192,4 +210,35 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Supervisor;
+    use devtone_core::AgentKind;
+    use std::io::Write;
+
+    #[test]
+    fn ignores_historical_jsonl_until_append() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let jsonl = root.join("s.jsonl");
+        std::fs::write(
+            &jsonl,
+            r#"{"type":"message","role":"assistant","model":"old","usage":{"input":1,"output":99,"cacheRead":0,"cacheWrite":0}}"#
+        ).unwrap();
+        std::env::set_var("DEVTONE_PI_ROOT", root);
+        let mut sup = Supervisor::new(None, true, false);
+        let first = sup.tick();
+        assert_eq!(first.agent, AgentKind::None, "history must not select an agent");
+        let mut f = std::fs::OpenOptions::new().append(true).open(&jsonl).unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"message","role":"assistant","model":"sonnet","usage":{{"input":1,"output":20,"cacheRead":0,"cacheWrite":0}}}}"#
+        )
+        .unwrap();
+        drop(f);
+        let second = sup.tick();
+        assert_eq!(second.agent, AgentKind::Pi);
+    }
 }

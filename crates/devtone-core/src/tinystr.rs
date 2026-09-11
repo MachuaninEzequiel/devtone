@@ -1,8 +1,21 @@
 /// Fixed-capacity UTF-8 string. No heap on the hot path.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TinyStr {
     bytes: [u8; 24],
     len: u8,
+}
+
+impl serde::Serialize for TinyStr {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TinyStr {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = <String as serde::Deserialize>::deserialize(deserializer)?;
+        Ok(Self::from_str_lossy(&s))
+    }
 }
 
 impl TinyStr {
@@ -41,5 +54,12 @@ mod tests {
         let s = TinyStr::from_str_lossy("sonnet-3.7-thinking-extra");
         assert_eq!(s.as_str().len(), 24);
         assert!(s.as_str().is_char_boundary(s.as_str().len()));
+    }
+
+    #[test]
+    fn json_is_a_string_not_bytes() {
+        let s = TinyStr::from_str_lossy("sonnet");
+        let j = serde_json::to_string(&s).unwrap();
+        assert_eq!(j, "\"sonnet\"");
     }
 }

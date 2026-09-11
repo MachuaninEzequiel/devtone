@@ -69,28 +69,32 @@ impl App {
         #[cfg(not(feature = "tui"))]
         let tui_join = None::<thread::JoinHandle<()>>;
 
-        let mut notch_wanted = cfg.notch && !cli.no_notch && !cli.headless;
-        let _ = notch_wanted;
+        let notch_wanted = cfg.notch && !cli.no_notch && !cli.headless;
 
-        while running.load(Ordering::SeqCst) {
-            let frame = **state.load();
-            let _ = server.poll(&tx, frame);
-            while let Ok(cmd) = rx.try_recv() {
-                match cmd {
-                    Command::Quit => running.store(false, Ordering::SeqCst),
-                    Command::Mute => {
-                        let next = !muted.load(Ordering::SeqCst);
-                        muted.store(next, Ordering::SeqCst);
-                    }
-                    Command::SetIntensity(v) => {
-                        let _ = v;
-                    }
-                    Command::ToggleNotch => {
-                        notch_wanted = !notch_wanted;
-                    }
+        if notch_wanted {
+            #[cfg(feature = "notch")]
+            {
+                let snap_n = snap.clone();
+                let tx_n = tx.clone();
+                let running_n = running.clone();
+                let muted_n = muted.clone();
+                let state_n = state.clone();
+                let tx_i = tx.clone();
+                let handle = thread::spawn(move || {
+                    ipc_loop(server, tx_i, rx, state_n, muted_n, running_n);
+                });
+                if let Err(e) = devtone_notch::run_notch(snap_n, tx_n, running.clone()) {
+                    eprintln!("devtone: notch disabled: {e}");
                 }
+                running.store(false, Ordering::SeqCst);
+                let _ = handle.join();
             }
-            thread::sleep(Duration::from_millis(10));
+            #[cfg(not(feature = "notch"))]
+            {
+                ipc_loop(server, tx, rx, state.clone(), muted.clone(), running.clone());
+            }
+        } else {
+            ipc_loop(server, tx, rx, state.clone(), muted.clone(), running.clone());
         }
 
         thread::sleep(Duration::from_millis(150));
@@ -100,6 +104,32 @@ impl App {
         drop(tui_join);
         let _ = sock;
         ExitCode::SUCCESS
+    }
+}
+
+fn ipc_loop(
+    server: IpcServer,
+    tx: Sender<Command>,
+    rx: crossbeam_channel::Receiver<Command>,
+    state: Arc<ArcSwap<StateFrame>>,
+    muted: Arc<AtomicBool>,
+    running: Arc<AtomicBool>,
+) {
+    while running.load(Ordering::SeqCst) {
+        let frame = **state.load();
+        let _ = server.poll(&tx, frame);
+        while let Ok(cmd) = rx.try_recv() {
+            match cmd {
+                Command::Quit => running.store(false, Ordering::SeqCst),
+                Command::Mute => {
+                    let next = !muted.load(Ordering::SeqCst);
+                    muted.store(next, Ordering::SeqCst);
+                }
+                Command::SetIntensity(_) => {}
+                Command::ToggleNotch => {}
+            }
+        }
+        thread::sleep(Duration::from_millis(10));
     }
 }
 

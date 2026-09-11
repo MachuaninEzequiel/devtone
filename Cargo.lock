@@ -670,6 +670,8 @@ dependencies = [
 name = "devtone-notch"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
+ "crossbeam-channel",
  "devtone-core",
  "softbuffer",
  "winit",
