@@ -7,3 +7,4 @@ description = "Shared types, mapper, and IPC schema for devtone"
 
 [dependencies]
 serde = { workspace = true }
+serde_json = { workspace = true }
